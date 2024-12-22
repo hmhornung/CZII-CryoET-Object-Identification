@@ -42,6 +42,7 @@ def random_augmentation(volume,
     Returns:
         list: Augmented (volume, mask) pairs.
     """
+    if save: print(f"Generating {filename} samples")
     
     if len(volume.shape) == 3:  volume = np.expand_dims(volume, axis=0)
     if len(mask.shape) == 3:  mask = np.expand_dims(mask, axis=0)
@@ -86,15 +87,22 @@ def random_augmentation(volume,
     
     augmented_samples = []
     
+    
     for n in range(num_samples):
         sample = augment(sample_dict)
         
         # Add to list
         if save:
-            zarr.save(os.path.join(dest, "source/", f"{filename}_{n}.zarr"), sample)
-            zarr.save(os.path.join(dest, "target/", f"{filename}_{n}.zarr"), )
+            np.save(os.path.join(dest, "source/", f"{filename}-{n}.npy"), sample["source"])
+            np.save(os.path.join(dest, "target/", f"{filename}-{n}.npy"), sample["target"])
+            checkpts = [0.25,0.5,0.75,0.99]
+            for i in checkpts:
+                if n == int(num_samples * i):
+                    print(f"\t{int(i*100)}%")
         else:
             augmented_samples.append(sample)
+            
+    if save: print(f"{filename} samples saved\n")
     
     return augmented_samples
 

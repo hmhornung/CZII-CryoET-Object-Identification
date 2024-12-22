@@ -5,8 +5,8 @@ import zarr
 import numpy as np
 import matplotlib.pyplot as plt
 
-def get_root(cnfg_path="copick_config.json"):
-    root = copick.from_file("copick_config.json")
+def get_root(cnfg_path="H:/Projects/Kaggle/CZII-CryoET-Object-Identification/preprocessing/copick_config.json"):
+    root = copick.from_file(cnfg_path)
     return root
 
 def get_picks_dict(root, particles_only=True):
