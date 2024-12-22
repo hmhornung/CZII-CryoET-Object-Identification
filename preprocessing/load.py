@@ -75,7 +75,7 @@ def get_run_volume_picks(root, run='TS_5_4', level=0, particles=None):
 
 import numpy as np
 
-def create_sphere(volume, center, radius, value=1):
+def create_sphere(volume, center, radius, value):
     """
     Creates a sphere in a 3D volume array.
 
@@ -103,18 +103,18 @@ def create_sphere(volume, center, radius, value=1):
 
 # print(volume[i])
 
-def get_picks_mask(shape, pick_dict, coords, scale):
-    mask = np.zeros(shape)
+def get_picks_mask(shape, pick_dict, coords, scale, use_dscrt=True):
+    mask = np.zeros(shape, dtype=np.int16)
     
     for particle in pick_dict:
         # print(pick_dict[particle]['radius'])
         rad = int(np.ceil(pick_dict[particle]['radius'] / scale))
-        
-        val = pick_dict[particle]['label']
+        if use_dscrt: val = pick_dict[particle]['label']
+        else: val = 1.0
         points = coords[particle]
         for idx in range(points.shape[0]):
             point = points[idx]
-            mask = create_sphere(mask, point, rad, 1)
+            mask = create_sphere(mask, point, rad, val)
     
     return mask
 
