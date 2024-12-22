@@ -1,4 +1,6 @@
 import numpy as np
+import zarr
+import os
 import monai
 from monai.transforms import (
     Compose,
@@ -8,7 +10,8 @@ from monai.transforms import (
     RandSpatialCropd,
     SpatialPadd,
     ResizeWithPadOrCropd,
-    RandRotated
+    RandRotated,
+    SqueezeDimd
 )
 
 # Will probably add scale prob / range
@@ -31,8 +34,8 @@ def random_augmentation(volume,
     Augment 3D volume and mask with cropping, normalization, padding, flipping, and rotation.
 
     Parameters:
-        volume (np.ndarray): Input 3D volume (shape: (C) x D x H x W). Channel optional
-        mask (np.ndarray): Input 3D mask (shape: D x H x W).
+        volume (np.ndarray): source 3D volume (shape: (C) x D x H x W). Channel optional
+        mask (np.ndarray): source 3D mask (shape: D x H x W).
         num_samples (int): Number of augmented samples to generate.
         aug_params (dict): parameters for augmentation {patch_size, final_size, flip_prob, rot_prob, rot_range(radians)}
 
@@ -43,25 +46,25 @@ def random_augmentation(volume,
     if len(volume.shape) == 3:  volume = np.expand_dims(volume, axis=0)
     if len(mask.shape) == 3:  mask = np.expand_dims(mask, axis=0)
     
-    sample_dict = {"input": volume, "target": mask}
+    sample_dict = {"source": volume, "target": mask}
     
     augment = Compose([
         RandSpatialCropd(
-            keys=["input", "target"], 
+            keys=["source", "target"], 
             roi_size=aug_params["patch_size"], 
             random_center=True, 
             random_size=False
         ),
         NormalizeIntensityd(
-            keys="input"
+            keys="source"
         ),
         RandFlipd(
-                keys=["input","target"], 
+                keys=["source","target"], 
                 spatial_axis=[0, 1, 2], 
                 prob=aug_params["flip_prob"]
         ),
         RandRotated(
-            keys=["input","target"], 
+            keys=["source","target"], 
             range_x=aug_params["rot_range"], 
             range_y=aug_params["rot_range"], 
             range_z=aug_params["rot_range"], 
@@ -71,50 +74,15 @@ def random_augmentation(volume,
             mode=['bilinear', 'nearest']
         ),
         ResizeWithPadOrCropd(
-            keys=["input","target"], 
+            keys=["source","target"], 
             spatial_size=aug_params["final_size"], 
             method="symmetric",
             mode="constant"
-        )
-    ])
-    
-    crop = RandSpatialCropd(
-        keys=["input", "target"], 
-        roi_size=aug_params["patch_size"], 
-        random_center=True, 
-        random_size=False
-    )
-    
-    reg_aug = Compose([
-        NormalizeIntensityd(
-            keys="input"
         ),
-        ResizeWithPadOrCropd(
-            keys=["input","target"], 
-            spatial_size=aug_params["final_size"], 
-            method="symmetric",
-            mode="constant"
+        SqueezeDimd(
+            keys=["source","target"]
         )
     ])
-    
-    
-    rand_aug = Compose([
-            RandFlipd(
-                keys=["input","target"], 
-                spatial_axis=[0, 1, 2], 
-                prob=aug_params["flip_prob"]
-            ),
-            RandRotated(
-                keys=["input","target"], 
-                range_x=aug_params["rot_range"], 
-                range_y=aug_params["rot_range"], 
-                range_z=aug_params["rot_range"], 
-                prob=aug_params["rot_prob"],  
-                keep_size=True,
-                padding_mode='zeros',
-                mode=['bilinear', 'nearest']
-            )
-        ])
     
     augmented_samples = []
     
@@ -122,7 +90,11 @@ def random_augmentation(volume,
         sample = augment(sample_dict)
         
         # Add to list
-        augmented_samples.append(sample)
+        if save:
+            zarr.save(os.path.join(dest, "source/", f"{filename}_{n}.zarr"), sample)
+            zarr.save(os.path.join(dest, "target/", f"{filename}_{n}.zarr"), )
+        else:
+            augmented_samples.append(sample)
     
     return augmented_samples
 
