@@ -4,7 +4,8 @@ import json
 import zarr
 import numpy as np
 import matplotlib.pyplot as plt
-
+import torch
+from scipy.ndimage import gaussian_filter
 def get_root(cnfg_path="H:/Projects/Kaggle/CZII-CryoET-Object-Identification/preprocessing/copick_config.json"):
     root = copick.from_file(cnfg_path)
     return root
@@ -103,7 +104,7 @@ def create_sphere(volume, center, radius, value):
 
 # print(volume[i])
 
-def get_picks_mask(shape, pick_dict, coords, scale, use_dscrt=True):
+def get_picks_mask(shape, pick_dict, coords, scale, pts = False, use_dscrt=True):
     mask = np.zeros(shape, dtype=np.int16)
     
     for particle in pick_dict:
@@ -114,21 +115,75 @@ def get_picks_mask(shape, pick_dict, coords, scale, use_dscrt=True):
         points = coords[particle]
         for idx in range(points.shape[0]):
             point = points[idx]
-            mask = create_sphere(mask, point, rad, val)
+            if pts:
+                mask[int(point[0]), int(point[1]), int(point[2])] = val
+            else:
+                mask = create_sphere(mask, point, rad, val)
     
     return mask
 
-# cnfg_path = "H:/Projects/Kaggle/CZII-CryoET-Object-Identification/preprocessing/copick_config.json"
+def create_exponential_heatmap(labels, volume_shape, points, radii):
+    heatmap = np.zeros((labels, *volume_shape), dtype=np.float32)
+    zz, yy, xx = np.meshgrid(
+        np.arange(volume_shape[0]),
+        np.arange(volume_shape[1]),
+        np.arange(volume_shape[2]),
+        indexing="ij"
+    )
 
-# root = get_root(cnfg_path)
+    for label in range(labels):
+        radius = radii[label]  # Get the radius for this label
+        for point in points[label]:
+            distances = np.sqrt((zz - point[0])**2 + (yy - point[1])**2 + (xx - point[2])**2)
+            mask = distances <= radius
+            decay = np.exp(-distances / radius) - np.exp(-1)  # Normalize decay to start near 0
+            decay /= 1 - np.exp(-1)  # Scale to make center 1.0
+            heatmap[label][mask] = np.maximum(heatmap[label][mask], decay[mask])
+            
+    background_channel = np.ones(volume_shape, dtype=np.float32)
+    for i in range(heatmap.shape[0]):
+        background_channel = background_channel - heatmap[i]
+    background_channel[background_channel < 0.0] = 0.0
+    return np.concatenate((np.expand_dims(background_channel, axis=0), heatmap), axis=0)
 
-# picks = get_picks_dict(root)
+def create_exponential_heatmap_gpu(labels, volume_shape, points, radii, device="cuda"):
+    heatmap = torch.zeros((labels, *volume_shape), dtype=torch.float32, device=device)
+    zz, yy, xx = torch.meshgrid(
+        torch.arange(volume_shape[0], device=device),
+        torch.arange(volume_shape[1], device=device),
+        torch.arange(volume_shape[2], device=device),
+        indexing="ij"
+    )
 
-# vol, coords, scales = get_run_volume_picks(root, level=2)
+    for label in range(labels):
+        radius = radii[label]  # Get the radius for this label
+        for point in points[label]:
+            distances = torch.sqrt((zz - point[0])**2 + (yy - point[1])**2 + (xx - point[2])**2)
+            mask = distances <= radius
+            decay = torch.exp(-distances / radius) - torch.exp(torch.tensor(-1.0, device=device))
+            decay /= 1 - torch.exp(torch.tensor(-1.0, device=device))  # Normalize
+            heatmap[label][mask] = torch.maximum(heatmap[label][mask], decay[mask])
 
-# for pick in picks:
-#     print(pick)
+    background_channel = torch.ones(volume_shape, dtype=torch.float32, device=device)
+    for i in range(heatmap.shape[0]):
+        background_channel -= heatmap[i]
+    background_channel[background_channel < 0.0] = 0.0
     
-# mask = get_picks_mask(vol.shape, picks, coords, int(scales[0]))
+    return torch.cat((background_channel.unsqueeze(0), heatmap), dim=0)
 
-# plt.imshow(mask[14, :, :], cmap="viridis")
+def create_gaussian_heatmap(pt_mask, radii, sigma_factor = 1, n_class = 6):
+    sigma = [r / 2 for r in radii]
+    heatmaps = np.zeros((n_class, *pt_mask.shape), dtype=np.float32)
+
+    for class_id in range(1, n_class + 1):
+        # Create a binary mask for the current class
+        class_mask = (pt_mask == class_id).astype(np.float32)
+        
+        # Apply Gaussian filter to the binary mask
+        heatmaps[class_id - 1] = gaussian_filter(class_mask, sigma=sigma[class_id - 1], axes=(0,1,2))
+        
+    heatmaps /= (heatmaps.max(axis=(1, 2, 3), keepdims=True) + 1e-8)
+    background = 1 - heatmaps.sum(axis=0, keepdims=True)
+    background[background < 0] = 0
+    heatmaps = np.concatenate((background, heatmaps), axis=0)
+    return heatmaps
